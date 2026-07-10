@@ -190,7 +190,7 @@
                 const deltaY = touchY - previousTouch.y;
 
                 // Hassasiyet Katsayısı
-                const sensitivity = 0.003;
+                const sensitivity = 0.01;
                 
                 yaw -= deltaX * sensitivity;
                 pitch -= deltaY * sensitivity;
@@ -226,7 +226,7 @@
                     Math.random() * 3 + 10,  // Y ekseninde yukarı hız
                     Math.random() * 2 - 1    // Z ekseninde ufak sapma
                 ),
-                gravity: 9.8
+                gravity: 7.8
             };
 
             clays.push(clay);
