@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>3D Mobil Trap & Skeet Oyunu</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #87CEEB;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+        }
+        /* Mobil Arayüz Elemanları */
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .hud {
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.6);
+            pointer-events: auto;
+        }
+        #controls {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+            pointer-events: auto;
+            margin-bottom: 20px;
+        }
+        .btn {
+            width: 90px;
+            height: 90px;
+            border-radius: 50%;
+            border: 3px solid white;
+            font-weight: bold;
+            font-size: 18px;
+            color: white;
+            text-shadow: 1px 1px 2px black;
+            box-shadow: 0px 4px 10px rgba(0,0,0,0.4);
+            outline: none;
+            transition: transform 0.1s;
+        }
+        .btn:active {
+            transform: scale(0.9);
+        }
+        #pull-btn { background: linear-gradient(#f39c12, #d35400); }
+        #fire-btn { background: linear-gradient(#e74c3c, #c0392b); }
+        /* Nişangah (Crosshair) */
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 20px;
+            height: 20px;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+        #crosshair::before, #crosshair::after {
+            content: '';
+            position: absolute;
+            background: rgba(255, 255, 255, 0.8);
+        }
+        #crosshair::before { top: 9px; left: 0; width: 20px; height: 20px; height: 2px; }
+        #crosshair::after { left: 9px; top: 0; width: 2px; height: 20px; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+
+    <div id="ui-layer">
+        <div style="display: flex; justify-content: space-between; width: 100%;">
+            <div id="score-board" class="hud">SKOR: 0</div>
+            <div id="ammo-board" class="hud">FİŞEK: 2</div>
+        </div>
+        
+        <div id="controls">
+            <button id="pull-btn" class="btn">PULL!</button>
+            <button id="fire-btn" class="btn">ATEŞ</button>
+        </div>
+    </div>
+    
+    <div id="crosshair"></div>
+
+    <script>
+        // --- OYUN DEĞİŞKENLERİ ---
+        let scene, camera, renderer;
+        let clays = [];
+        let score = 0;
+        let ammo = 2;
+        let isAiming = false;
+        let previousTouch = { x: 0, y: 0 };
+        
+        // Kamera Bakış Açı Sınırları (Radyan)
+        let pitch = 0, yaw = 0;
+        const maxPitch = Math.PI / 4;  // Yukarı bakış sınırı
+        const minPitch = -Math.PI / 12; // Aşağı bakış sınırı
+
+        const container = document.getElementById('canvas-container');
+
+        // --- BAŞLANGIÇ AYARLARI ---
+        function init() {
+            // Sahne
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87CEEB); // Gökyüzü mavisi
+            scene.fog = new THREE.FogExp2(0x87CEEB, 0.015);
+
+            // Kamera
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 1.6, 0); // İnsan gözü hizası
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            container.appendChild(renderer.domElement);
+
+            // Işıklandırma
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            dirLight.position.set(20, 40, 20);
+            dirLight.castShadow = true;
+            scene.add(dirLight);
+
+            // Çevre (Yeşil Alan/Poligon)
+            const groundGeo = new THREE.PlaneGeometry(500, 500);
+            const groundMat = new THREE.MeshStandardMaterial({ color: 0x557a2b, roughness: 0.9 });
+            const ground = new THREE.Mesh(groundGeo, groundMat);
+            ground.rotation.x = -Math.PI / 2;
+            ground.receiveShadow = true;
+            scene.add(ground);
+
+            // Basit Bir Tüfeksiz Silah Namlusu Efekti (Ekranın sağ altında sabit duran küçük bir gösterge)
+            const gunGeo = new THREE.CylinderGeometry(0.02, 0.025, 0.4, 8);
+            const gunMat = new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.8 });
+            const gun = new THREE.Mesh(gunGeo, gunMat);
+            gun.rotation.x = Math.PI / 2;
+            gun.position.set(0.2, -0.2, -0.4);
+            camera.add(gun);
+            scene.add(camera);
+
+            // Olay Dinleyicileri (Dökünmatik Kontroller)
+            window.addEventListener('resize', onWindowResize);
+            setupMobileControls();
+
+            // Buton Fonksiyonları
+            document.getElementById('pull-btn').addEventListener('click', launchClay);
+            document.getElementById('fire-btn').addEventListener('click', fireShotgun);
+
+            // Oyun Döngüsünü Başlat
+            animate();
+        }
+
+        // --- MOBİL DOKUNMATİK EKRAN SÜRÜKLEME (NİŞAN ALMA) ---
+        function setupMobileControls() {
+            container.addEventListener('touchstart', (e) => {
+                isAiming = true;
+                previousTouch.x = e.touches[0].clientX;
+                previousTouch.y = e.touches[0].clientY;
+            }, { passive: true });
+
+            container.addEventListener('touchmove', (e) => {
+                if (!isAiming) return;
+                
+                const touchX = e.touches[0].clientX;
+                const touchY = e.touches[0].clientY;
+                
+                const deltaX = touchX - previousTouch.x;
+                const deltaY = touchY - previousTouch.y;
+
+                // Hassasiyet Katsayısı
+                const sensitivity = 0.003;
+                
+                yaw -= deltaX * sensitivity;
+                pitch -= deltaY * sensitivity;
+                
+                // Limitler
+                pitch = Math.max(minPitch, Math.min(maxPitch, pitch));
+
+                // Kamerayı Döndür
+                camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+
+                previousTouch.x = touchX;
+                previousTouch.y = touchY;
+            }, { passive: true });
+
+            container.addEventListener('touchend', () => { isAiming = false; });
+        }
+
+        // --- PLAK FIRLATMA MEKANİĞİ (TRAP/SKEET) ---
+        function launchClay() {
+            // Plak Geometrisi (İnce basık silindir)
+            const clayGeo = new THREE.CylinderGeometry(0.25, 0.25, 0.05, 16);
+            const clayMat = new THREE.MeshStandardMaterial({ color: 0xff4500, roughness: 0.5 }); // Neon Turuncu Plak
+            const clay = new THREE.Mesh(clayGeo, clayMat);
+            
+            // Fırlatılış Noktası (Oyuncunun hafif önü ve solu)
+            clay.position.set(-5, 1, -10);
+            scene.add(clay);
+
+            // Fiziksel Hız Değişkenleri (Yukarı ve Sağa Doğru Yay Çizecek)
+            clay.userData = {
+                velocity: new THREE.Vector3(
+                    Math.random() * 4 + 6,   // X ekseninde sağa doğru hız
+                    Math.random() * 3 + 10,  // Y ekseninde yukarı hız
+                    Math.random() * 2 - 1    // Z ekseninde ufak sapma
+                ),
+                gravity: 9.8
+            };
+
+            clays.push(clay);
+            ammo = 2; // Her plakta 2 fişek hakkı yenilenir
+            document.getElementById('ammo-board').innerText = "FİŞEK: " + ammo;
+        }
+
+        // --- ATEŞ ETME VE RAYCAST (VURMA KONTROLÜ) ---
+        function fireShotgun() {
+            if (ammo <= 0) return;
+            ammo--;
+            document.getElementById('ammo-board').innerText = "FİŞEK: " + ammo;
+
+            // Ekranın tam ortasından ileriye doğru ışın gönder (Raycaster)
+            const raycaster = new THREE.Raycaster();
+            // Ekran merkezi (0,0) Three.js koordinat sisteminde tam ortadır
+            raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+
+            const intersects = raycaster.intersectObjects(clays);
+
+            if (intersects.length > 0) {
+                const hitClay = intersects[0].object;
+                
+                // Vurulma Efekti (Basitçe plağı küçültüp yok ediyoruz)
+                createParticles(hitClay.position);
+                scene.remove(hitClay);
+                clays = clays.filter(c => c !== hitClay);
+
+                score += 10;
+                document.getElementById('score-board').innerText = "SKOR: " + score;
+            }
+        }
+
+        // --- BASİT PARÇALANMA EFEKTİ ---
+        function createParticles(pos) {
+            const pCount = 8;
+            const geom = new THREE.BoxGeometry(0.08, 0.08, 0.08);
+            const mat = new THREE.MeshBasicMaterial({ color: 0xff4500 });
+            
+            for(let i=0; i<pCount; i++) {
+                const p = new THREE.Mesh(geom, mat);
+                p.position.copy(pos);
+                p.userData = {
+                    v: new THREE.Vector3((Math.random()-0.5)*5, (Math.random()-0.5)*5, (Math.random()-0.5)*5)
+                };
+                scene.add(p);
+                // 500ms sonra sahneden sil
+                setTimeout(() => scene.remove(p), 500);
+            }
+        }
+
+        // --- EKRAN BOYUTU DEĞİŞİMİ ---
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- OYUN DÖNGÜSÜ (ANIMATION LOOP) ---
+        const clock = new THREE.Clock();
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+
+            // Plakların hareket simülasyonu (Fizik formülü yerçekimi dahil)
+            for (let i = clays.length - 1; i >= 0; i--) {
+                const clay = clays[i];
+                
+                // Yerçekimi etkisi uygula
+                clay.userData.velocity.y -= clay.userData.gravity * delta;
+                
+                // Pozisyonu güncelle
+                clay.position.addScaledVector(clay.userData.velocity, delta);
+                
+                // Kendi etrafında dönsün (Aerodinamik görüntü için)
+                clay.rotation.y += 5 * delta;
+
+                // Yere düşen veya çok uzaklaşan plakları temizle
+                if (clay.position.y < 0 || clay.position.x > 40) {
+                    scene.remove(clay);
+                    clays.splice(i, 1);
+                }
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // Oyunu Başlat
+        init();
+    </script>
+</body>
+</html>
